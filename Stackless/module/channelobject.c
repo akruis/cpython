@@ -74,7 +74,6 @@ channel_clear(PyObject *ob)
         ob = (PyObject *) slp_channel_remove(ch, NULL, NULL, NULL);
         Py_DECREF(ob);
     }
-    return 0;
 }
 
 static void
