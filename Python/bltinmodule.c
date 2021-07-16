@@ -5,6 +5,7 @@
 #include "ast.h"
 #undef Yield   /* undefine macro conflicting with <winbase.h> */
 #include "pycore_pystate.h"
+#include "pycore_tupleobject.h"
 #include "pycore_stackless.h"
 
 _Py_IDENTIFIER(__builtins__);
@@ -122,7 +123,7 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
                         "__build_class__: name is not a string");
         return NULL;
     }
-    orig_bases = _PyStack_AsTupleSlice(args, nargs, 2, nargs);
+    orig_bases = _PyTuple_FromArray(args + 2, nargs - 2);
     if (orig_bases == NULL)
         return NULL;
 
@@ -143,7 +144,7 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
             return NULL;
         }
 
-        meta = _PyDict_GetItemId(mkw, &PyId_metaclass);
+        meta = _PyDict_GetItemIdWithError(mkw, &PyId_metaclass);
         if (meta != NULL) {
             Py_INCREF(meta);
             if (_PyDict_DelItemId(mkw, &PyId_metaclass) < 0) {
@@ -154,6 +155,11 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
             }
             /* metaclass is explicitly given, check if it's indeed a class */
             isclass = PyType_Check(meta);
+        }
+        else if (PyErr_Occurred()) {
+            Py_DECREF(mkw);
+            Py_DECREF(bases);
+            return NULL;
         }
     }
     if (meta == NULL) {
@@ -740,6 +746,7 @@ compile as builtin_compile
     flags: int = 0
     dont_inherit: bool(accept={int}) = False
     optimize: int = -1
+    feature_version: int = -1
 
 Compile source into a code object that can be executed by exec() or eval().
 
@@ -758,8 +765,8 @@ in addition to any features explicitly specified.
 static PyObject *
 builtin_compile_impl(PyObject *module, PyObject *source, PyObject *filename,
                      const char *mode, int flags, int dont_inherit,
-                     int optimize)
-/*[clinic end generated code: output=1fa176e33452bb63 input=0ff726f595eb9fcd]*/
+                     int optimize, int feature_version)
+/*[clinic end generated code: output=b0c09c84f116d3d7 input=5fcc30651a6acaa9]*/
 {
     PyObject *source_copy;
     const char *str;
@@ -770,6 +777,10 @@ builtin_compile_impl(PyObject *module, PyObject *source, PyObject *filename,
     PyObject *result;
 
     cf.cf_flags = flags | PyCF_SOURCE_IS_UTF8;
+    cf.cf_feature_version = PY_MINOR_VERSION;
+    if (feature_version >= 0 && (flags & PyCF_ONLY_AST)) {
+        cf.cf_feature_version = feature_version;
+    }
 
     if (flags &
         ~(PyCF_MASK | PyCF_MASK_OBSOLETE | PyCF_DONT_IMPLY_DEDENT | PyCF_ONLY_AST | PyCF_TYPE_COMMENTS))
@@ -959,10 +970,13 @@ builtin_eval_impl(PyObject *module, PyObject *source, PyObject *globals,
         return NULL;
     }
 
-    if (_PyDict_GetItemId(globals, &PyId___builtins__) == NULL) {
+    if (_PyDict_GetItemIdWithError(globals, &PyId___builtins__) == NULL) {
         if (_PyDict_SetItemId(globals, &PyId___builtins__,
                               PyEval_GetBuiltins()) != 0)
             return NULL;
+    }
+    else if (PyErr_Occurred()) {
+        return NULL;
     }
 
     if (PyCode_Check(source)) {
@@ -976,6 +990,7 @@ builtin_eval_impl(PyObject *module, PyObject *source, PyObject *globals,
     }
 
     cf.cf_flags = PyCF_SOURCE_IS_UTF8;
+    cf.cf_feature_version = PY_MINOR_VERSION;
     str = source_as_string(source, "eval", "string, bytes or code", &cf, &source_copy);
     if (str == NULL)
         return NULL;
@@ -1044,10 +1059,13 @@ builtin_exec_impl(PyObject *module, PyObject *source, PyObject *globals,
             locals->ob_type->tp_name);
         return NULL;
     }
-    if (_PyDict_GetItemId(globals, &PyId___builtins__) == NULL) {
+    if (_PyDict_GetItemIdWithError(globals, &PyId___builtins__) == NULL) {
         if (_PyDict_SetItemId(globals, &PyId___builtins__,
                               PyEval_GetBuiltins()) != 0)
             return NULL;
+    }
+    else if (PyErr_Occurred()) {
+        return NULL;
     }
 
     if (PyCode_Check(source)) {
@@ -1066,6 +1084,7 @@ builtin_exec_impl(PyObject *module, PyObject *source, PyObject *globals,
         const char *str;
         PyCompilerFlags cf;
         cf.cf_flags = PyCF_SOURCE_IS_UTF8;
+        cf.cf_feature_version = PY_MINOR_VERSION;
         str = source_as_string(source, "exec",
                                        "string, bytes or code", &cf,
                                        &source_copy);

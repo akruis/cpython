@@ -16,7 +16,50 @@
 
 /* This include file is included from pycore_pystate.h only */
 
-#include "pycore_slp_platformselect.h"  /* for SLP_CSTACK_SLOTS */
+/* how many cstacks to cache at all */
+#ifndef SLP_CSTACK_MAXCACHE
+#define SLP_CSTACK_MAXCACHE     100
+#endif
+
+/* adjust slots to typical size of a few recursions on your system */
+#ifndef SLP_CSTACK_SLOTS
+#define SLP_CSTACK_SLOTS        1024
+#endif
+
+typedef struct {
+    struct _cstack * cstack_chain;              /* the chain of all C-stacks of this interpreter. This is an uncounted/borrowed ref. */
+    PyObject * reduce_frame_func;               /* a function used to pickle frames */
+    PyObject * error_handler;                   /* the Stackless error handler */
+    PyObject * channel_hook;                    /* the channel callback function */
+    struct _bomb * mem_bomb;                    /* a permanent bomb to use for memory errors */
+    PyObject * schedule_hook;                   /* the schedule callback function */
+    slp_schedule_hook_func * schedule_fasthook; /* the fast C-only schedule_hook */
+    struct _ts * initial_tstate;                /* recording the main thread state */
+    uint8_t enable_softswitch;                  /* the flag which decides whether we try to use soft switching */
+    uint8_t pickleflags;                        /* flags for pickling / unpickling */
+} PyStacklessInterpreterState;
+
+#define SLP_INITIAL_TSTATE(tstate) \
+    (assert(tstate), \
+     assert((tstate)->interp->st.initial_tstate), \
+     (tstate)->interp->st.initial_tstate)
+
+/* The complete struct is already initialized with 0.
+ * Therefore we only need non-zero initializations.
+ */
+#define SPL_INTERPRETERSTATE_NEW(interp)       \
+    (interp)->st.enable_softswitch = 1;
+
+#define SPL_INTERPRETERSTATE_CLEAR(interp)     \
+    (interp)->st.cstack_chain = NULL; /* uncounted ref */  \
+    Py_CLEAR((interp)->st.reduce_frame_func);  \
+    Py_CLEAR((interp)->st.error_handler);      \
+    Py_CLEAR((interp)->st.mem_bomb);           \
+    Py_CLEAR((interp)->st.channel_hook);       \
+    Py_CLEAR((interp)->st.schedule_hook);      \
+    (interp)->st.schedule_fasthook = NULL;     \
+    (interp)->st.enable_softswitch = 1;        \
+    (interp)->st.pickleflags = 0;
 
 /*
  * Stackless runtime state

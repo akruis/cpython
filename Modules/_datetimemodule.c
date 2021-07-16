@@ -2921,6 +2921,23 @@ datetime_date_fromtimestamp(PyTypeObject *type, PyObject *timestamp)
     return date_fromtimestamp((PyObject *) type, timestamp);
 }
 
+/* bpo-36025: This is a wrapper for API compatibility with the public C API,
+ * which expects a function that takes an *args tuple, whereas the argument
+ * clinic generates code that takes METH_O.
+ */
+static PyObject *
+datetime_date_fromtimestamp_capi(PyObject *cls, PyObject *args)
+{
+    PyObject *timestamp;
+    PyObject *result = NULL;
+
+    if (PyArg_UnpackTuple(args, "fromtimestamp", 1, 1, &timestamp)) {
+        result = date_fromtimestamp(cls, timestamp);
+    }
+
+    return result;
+}
+
 /* Return new date from proleptic Gregorian ordinal.  Raises ValueError if
  * the ordinal is out of range.
  */
@@ -3004,7 +3021,8 @@ add_date_timedelta(PyDateTime_Date *date, PyDateTime_Delta *delta, int negate)
     int day = GET_DAY(date) + (negate ? -deltadays : deltadays);
 
     if (normalize_date(&year, &month, &day) >= 0)
-        result = new_date(year, month, day);
+        result = new_date_subclass_ex(year, month, day,
+                                      (PyObject* )Py_TYPE(date));
     return result;
 }
 
@@ -5166,9 +5184,10 @@ add_datetime_timedelta(PyDateTime_DateTime *date, PyDateTime_Delta *delta,
         return NULL;
     }
 
-    return new_datetime(year, month, day,
-                        hour, minute, second, microsecond,
-                        HASTZINFO(date) ? date->tzinfo : Py_None, 0);
+    return new_datetime_subclass_ex(year, month, day,
+                                    hour, minute, second, microsecond,
+                                    HASTZINFO(date) ? date->tzinfo : Py_None,
+                                    (PyObject *)Py_TYPE(date));
 }
 
 static PyObject *
@@ -6273,7 +6292,7 @@ static PyDateTime_CAPI CAPI = {
     new_delta_ex,
     new_timezone,
     datetime_fromtimestamp,
-    date_fromtimestamp,
+    datetime_date_fromtimestamp_capi,
     new_datetime_ex2,
     new_time_ex2
 };

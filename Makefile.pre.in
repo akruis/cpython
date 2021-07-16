@@ -41,6 +41,7 @@ AR=		@AR@
 READELF=	@READELF@
 SOABI=		@SOABI@
 LDVERSION=	@LDVERSION@
+LIBPYTHON=	@LIBPYTHON@
 GITVERSION=	@GITVERSION@
 GITTAG=		@GITTAG@
 GITBRANCH=	@GITBRANCH@
@@ -104,6 +105,8 @@ PY_LDFLAGS_NODIST=$(CONFIGURE_LDFLAGS_NODIST) $(LDFLAGS_NODIST)
 NO_AS_NEEDED=	@NO_AS_NEEDED@
 SGI_ABI=	@SGI_ABI@
 CCSHARED=	@CCSHARED@
+# LINKFORSHARED are the flags passed to the $(CC) command that links
+# the python executable -- this is only needed for a few systems
 LINKFORSHARED=	@LINKFORSHARED@
 ARFLAGS=	@ARFLAGS@
 # Extra C flags added for building the interpreter object files.
@@ -119,6 +122,8 @@ CFLAGS_ALIASING=@CFLAGS_ALIASING@
 
 # Special C flags for slp_transfer.c
 SLPFLAGS=	@SLPFLAGS@
+SLP_STACKMAN_LIB= @SLP_STACKMAN_LIB@
+SLP_STACKMAN_OBJS= @SLP_STACKMAN_OBJS@
 
 # Machine-dependent subdirectories
 MACHDEP=	@MACHDEP@
@@ -292,39 +297,20 @@ LIBFFI_INCLUDEDIR=	@LIBFFI_INCLUDEDIR@
 
 ##########################################################################
 # Parser
-PGEN=		Parser/pgen$(EXE)
-
 POBJS=		\
 		Parser/acceler.o \
 		Parser/grammar1.o \
 		Parser/listnode.o \
 		Parser/node.o \
 		Parser/parser.o \
-		Parser/bitset.o \
-		Parser/metagrammar.o \
-		Parser/firstsets.o \
-		Parser/grammar.o \
 		Parser/token.o \
-		Parser/pgen.o
 
 PARSER_OBJS=	$(POBJS) Parser/myreadline.o Parser/parsetok.o Parser/tokenizer.o
-
-PGOBJS=		\
-		Objects/obmalloc.o \
-		Python/dynamic_annotations.o \
-		Python/mysnprintf.o \
-		Python/pyctype.o \
-		Parser/tokenizer_pgen.o \
-		Parser/printgrammar.o \
-		Parser/parsetok_pgen.o \
-		Parser/pgenmain.o
 
 PARSER_HEADERS= \
 		$(srcdir)/Parser/parser.h \
 		$(srcdir)/Include/parsetok.h \
 		$(srcdir)/Parser/tokenizer.h
-
-PGENOBJS=	$(POBJS) $(PGOBJS)
 
 ##########################################################################
 # Python
@@ -339,7 +325,7 @@ PYTHON_OBJS=	\
 		Python/bltinmodule.o \
 		Python/ceval.o \
 		Stackless/core/cframeobject.o \
-		Stackless/core/slp_transfer.o \
+		Stackless/platf/slp_transfer.o \
 		Stackless/core/stacklesseval.o \
 		Stackless/core/stackless_util.o \
 		Stackless/module/channelobject.o \
@@ -348,6 +334,7 @@ PYTHON_OBJS=	\
 		Stackless/module/taskletobject.o \
 		Stackless/pickling/prickelpit.o \
 		Stackless/pickling/safe_pickle.o \
+		$(SLP_STACKMAN_OBJS) \
 		Python/codecs.o \
 		Python/compile.o \
 		Python/coreconfig.o \
@@ -369,6 +356,7 @@ PYTHON_OBJS=	\
 		Python/mystrtoul.o \
 		Python/pathconfig.o \
 		Python/peephole.o \
+		Python/preconfig.o \
 		Python/pyarena.o \
 		Python/pyctype.o \
 		Python/pyfpe.o \
@@ -421,6 +409,7 @@ OBJECT_OBJS=	\
 		Objects/floatobject.o \
 		Objects/frameobject.o \
 		Objects/funcobject.o \
+		Objects/interpreteridobject.o \
 		Objects/iterobject.o \
 		Objects/listobject.o \
 		Objects/longobject.o \
@@ -721,8 +710,19 @@ Programs/_testembed: Programs/_testembed.o $(LIBRARY) $(LDLIBRARY) $(PY3LIBRARY)
 
 
 $(srcdir)/Include/cpython/slp_exttype.h: $(srcdir)/Objects/typeobject.c
-	$(PYTHON_FOR_REGEN) $(srcdir)/Stackless/Tools/extract_slp_info.py
-	$(UPDATE_FILE) $(srcdir)/Include/cpython/slp_exttype.h $(srcdir)/Include/cpython/slp_exttype.h.new
+	$(PYTHON_FOR_REGEN) $(srcdir)/Stackless/Tools/extract_slp_info.py && \
+	mv $(srcdir)/Include/cpython/slp_exttype.h.new $(srcdir)/Include/cpython/slp_exttype.h
+
+$(SLP_STACKMAN_OBJS): $(SLP_STACKMAN_LIB)
+	cp $(SLP_STACKMAN_LIB) Stackless/platf/libstackman.a
+	cd Stackless/platf && $(AR) x libstackman.a && rm libstackman.a
+
+Stackless/platf/slp_transfer.o: $(srcdir)/Stackless/platf/slp_transfer.c
+	$(CC) -c $(PY_CORE_CFLAGS) $(SLPFLAGS) -o $@ $(srcdir)/Stackless/platf/slp_transfer.c
+
+.PHONY: teststackless
+teststackless:	@DEF_MAKE_RULE@ platform
+	$(TESTPYTHON) -E $(srcdir)/Stackless/unittests/runAll.py
 
 ############################################################################
 # Importlib
@@ -758,7 +758,7 @@ regen-importlib: Programs/_freeze_importlib
 # Regenerate all generated files
 
 regen-all: regen-opcode regen-opcode-targets regen-typeslots regen-grammar \
-	regen-token regen-symbol regen-ast regen-importlib clinic
+	regen-token regen-keyword regen-symbol regen-ast regen-importlib clinic
 
 ############################################################################
 # Special rules for object files
@@ -818,30 +818,17 @@ Python/sysmodule.o: $(srcdir)/Python/sysmodule.c Makefile
 
 $(IO_OBJS): $(IO_H)
 
-$(PGEN): $(PGENOBJS)
-		$(CC) $(OPT) $(PY_CORE_LDFLAGS) $(PGENOBJS) $(LIBS) -o $(PGEN)
-
 .PHONY: regen-grammar
-regen-grammar: $(PGEN)
+regen-grammar: regen-token
 	# Regenerate Include/graminit.h and Python/graminit.c
 	# from Grammar/Grammar using pgen
 	@$(MKDIR_P) Include
-	$(PGEN) $(srcdir)/Grammar/Grammar \
+	PYTHONPATH=$(srcdir) $(PYTHON_FOR_REGEN) -m Parser.pgen $(srcdir)/Grammar/Grammar \
+		$(srcdir)/Grammar/Tokens \
 		$(srcdir)/Include/graminit.h.new \
 		$(srcdir)/Python/graminit.c.new
 	$(UPDATE_FILE) $(srcdir)/Include/graminit.h $(srcdir)/Include/graminit.h.new
 	$(UPDATE_FILE) $(srcdir)/Python/graminit.c $(srcdir)/Python/graminit.c.new
-
-Parser/grammar.o:	$(srcdir)/Parser/grammar.c \
-				$(srcdir)/Include/token.h \
-				$(srcdir)/Include/grammar.h
-Parser/metagrammar.o:	$(srcdir)/Parser/metagrammar.c
-
-Parser/tokenizer_pgen.o:	$(srcdir)/Parser/tokenizer.c
-Parser/parsetok_pgen.o:	$(srcdir)/Parser/parsetok.c
-Parser/printgrammar.o: $(srcdir)/Parser/printgrammar.c
-
-Parser/pgenmain.o:	$(srcdir)/Include/parsetok.h
 
 .PHONY=regen-ast
 regen-ast:
@@ -889,6 +876,15 @@ regen-token:
 	$(PYTHON_FOR_REGEN) $(srcdir)/Tools/scripts/generate_token.py py \
 		$(srcdir)/Grammar/Tokens \
 		$(srcdir)/Lib/token.py
+
+.PHONY: regen-keyword
+regen-keyword:
+	# Regenerate Lib/keyword.py from Grammar/Grammar and Grammar/Tokens
+	# using Parser/pgen
+	PYTHONPATH=$(srcdir) $(PYTHON_FOR_REGEN) -m Parser.pgen.keywordgen $(srcdir)/Grammar/Grammar \
+		$(srcdir)/Grammar/Tokens \
+		$(srcdir)/Lib/keyword.py.new
+	$(UPDATE_FILE) $(srcdir)/Lib/keyword.py $(srcdir)/Lib/keyword.py.new
 
 .PHONY: regen-symbol
 regen-symbol: $(srcdir)/Include/graminit.h
@@ -956,7 +952,8 @@ regen-opcode-targets:
 		$(srcdir)/Python/opcode_targets.h.new
 	$(UPDATE_FILE) $(srcdir)/Python/opcode_targets.h $(srcdir)/Python/opcode_targets.h.new
 
-Python/ceval.o: $(srcdir)/Python/opcode_targets.h $(srcdir)/Python/ceval_gil.h
+Python/ceval.o: $(srcdir)/Python/opcode_targets.h $(srcdir)/Python/ceval_gil.h \
+		$(srcdir)/Python/condvar.h
 
 Python/frozen.o: $(srcdir)/Python/importlib.h $(srcdir)/Python/importlib_external.h \
 		$(srcdir)/Python/importlib_zipimport.h
@@ -989,9 +986,6 @@ regen-typeslots:
 		$(srcdir)/Objects/typeslots.inc.new
 	$(UPDATE_FILE) $(srcdir)/Objects/typeslots.inc $(srcdir)/Objects/typeslots.inc.new
 
-Stackless/core/slp_transfer.o: $(srcdir)/Stackless/core/slp_transfer.c
-		$(CC) -c $(PY_CORE_CFLAGS) $(SLPFLAGS) -o $@ $(srcdir)/Stackless/core/slp_transfer.c
-
 ############################################################################
 # Header files
 
@@ -1013,7 +1007,6 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/codecs.h \
 		$(srcdir)/Include/compile.h \
 		$(srcdir)/Include/complexobject.h \
-		$(srcdir)/Include/coreconfig.h \
 		$(srcdir)/Include/descrobject.h \
 		$(srcdir)/Include/dictobject.h \
 		$(srcdir)/Include/dtoa.h \
@@ -1028,6 +1021,7 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/funcobject.h \
 		$(srcdir)/Include/genobject.h \
 		$(srcdir)/Include/import.h \
+		$(srcdir)/Include/interpreteridobject.h \
 		$(srcdir)/Include/intrcheck.h \
 		$(srcdir)/Include/iterobject.h \
 		$(srcdir)/Include/listobject.h \
@@ -1035,7 +1029,6 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/longobject.h \
 		$(srcdir)/Include/marshal.h \
 		$(srcdir)/Include/memoryobject.h \
-		$(srcdir)/Include/metagrammar.h \
 		$(srcdir)/Include/methodobject.h \
 		$(srcdir)/Include/modsupport.h \
 		$(srcdir)/Include/moduleobject.h \
@@ -1047,8 +1040,6 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/osdefs.h \
 		$(srcdir)/Include/osmodule.h \
 		$(srcdir)/Include/patchlevel.h \
-		$(srcdir)/Include/pgen.h \
-		$(srcdir)/Include/pgenheaders.h \
 		$(srcdir)/Include/pyarena.h \
 		$(srcdir)/Include/pycapsule.h \
 		$(srcdir)/Include/pyctype.h \
@@ -1093,30 +1084,32 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/internal/pycore_stackless.h \
 		$(srcdir)/Include/internal/pycore_slp_pystate.h \
 		$(srcdir)/Include/internal/pycore_slp_prickelpit.h \
-		$(srcdir)/Include/internal/pycore_slp_platformselect.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_amd64_unix.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_arm32_gcc.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_arm_thumb_gcc.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_mips_unix.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_ppc_macosx.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_ppc_unix.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_ps3_SNTools.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_s390_unix.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_sparc_sun_gcc.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_x64_msvc.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_x86_msvc.h \
-		$(srcdir)/Include/internal/pycore_slp_switch_x86_unix.h \
+		$(srcdir)/Stackless/platf/switch_amd64_unix.h \
+		$(srcdir)/Stackless/platf/switch_arm32_gcc.h \
+		$(srcdir)/Stackless/platf/switch_arm_thumb_gcc.h \
+		$(srcdir)/Stackless/platf/switch_mips_unix.h \
+		$(srcdir)/Stackless/platf/switch_ppc_macosx.h \
+		$(srcdir)/Stackless/platf/switch_ppc_unix.h \
+		$(srcdir)/Stackless/platf/switch_ps3_SNTools.h \
+		$(srcdir)/Stackless/platf/switch_s390_unix.h \
+		$(srcdir)/Stackless/platf/switch_sparc_sun_gcc.h \
+		$(srcdir)/Stackless/platf/switch_x64_msvc.h \
+		$(srcdir)/Stackless/platf/switch_x86_msvc.h \
+		$(srcdir)/Stackless/platf/switch_x86_unix.h \
 		\
 		pyconfig.h \
 		$(PARSER_HEADERS) \
 		$(srcdir)/Include/Python-ast.h \
 		\
 		$(srcdir)/Include/cpython/abstract.h \
+		$(srcdir)/Include/cpython/coreconfig.h \
 		$(srcdir)/Include/cpython/dictobject.h \
+		$(srcdir)/Include/cpython/interpreteridobject.h \
 		$(srcdir)/Include/cpython/object.h \
 		$(srcdir)/Include/cpython/objimpl.h \
 		$(srcdir)/Include/cpython/pyerrors.h \
 		$(srcdir)/Include/cpython/pylifecycle.h \
+		$(srcdir)/Include/cpython/pymem.h \
 		$(srcdir)/Include/cpython/pystate.h \
 		$(srcdir)/Include/cpython/tupleobject.h \
 		$(srcdir)/Include/cpython/unicodeobject.h \
@@ -1126,6 +1119,7 @@ PYTHON_HEADERS= \
 		$(srcdir)/Include/internal/pycore_ceval.h \
 		$(srcdir)/Include/internal/pycore_condvar.h \
 		$(srcdir)/Include/internal/pycore_context.h \
+		$(srcdir)/Include/internal/pycore_coreconfig.h \
 		$(srcdir)/Include/internal/pycore_fileutils.h \
 		$(srcdir)/Include/internal/pycore_getopt.h \
 		$(srcdir)/Include/internal/pycore_gil.h \
@@ -1150,7 +1144,7 @@ TESTPYTHON=	$(RUNSHARED) ./$(BUILDPYTHON) $(TESTPYTHONOPTS)
 TESTRUNNER=	$(TESTPYTHON) $(srcdir)/Tools/scripts/run_tests.py
 TESTTIMEOUT=	1200
 
-.PHONY: test testall testuniversal buildbottest pythoninfo teststackless
+.PHONY: test testall testuniversal buildbottest pythoninfo
 
 # Run a basic set of regression tests.
 # This excludes some tests that are particularly resource-intensive.
@@ -1170,9 +1164,6 @@ testall:	@DEF_MAKE_RULE@ platform
 		-find $(srcdir)/Lib -name '*.py[co]' -print | xargs rm -f
 		-$(TESTRUNNER) -u all $(TESTOPTS)
 		$(TESTRUNNER) -u all $(TESTOPTS)
-
-teststackless:	@DEF_MAKE_RULE@ platform
-		$(TESTPYTHON) -E $(srcdir)/Stackless/unittests/runAll.py
 
 # Run the test suite for both architectures in a Universal build on OSX.
 # Must be run on an Intel box.
@@ -1522,6 +1513,8 @@ libinstall:	build_all $(srcdir)/Modules/xxmodule.c
 	-PYTHONPATH=$(DESTDIR)$(LIBDEST) $(RUNSHARED) \
 		$(PYTHON_FOR_BUILD) -m lib2to3.pgen2.driver $(DESTDIR)$(LIBDEST)/lib2to3/PatternGrammar.txt
 
+# bpo-21536: Misc/python-config.sh is generated in the build directory
+# from $(srcdir)Misc/python-config.sh.in.
 python-config: $(srcdir)/Misc/python-config.in Misc/python-config.sh
 	@ # Substitution happens here, as the completely-expanded BINDIR
 	@ # is not available in configure
@@ -1712,14 +1705,6 @@ frameworkaltinstallunixtools:
 frameworkinstallextras:
 	cd Mac && $(MAKE) installextras DESTDIR="$(DESTDIR)"
 
-# This installs a few of the useful scripts in Tools/scripts
-scriptsinstall:
-	SRCDIR=$(srcdir) $(RUNSHARED) \
-	$(PYTHON_FOR_BUILD) $(srcdir)/Tools/scripts/setup.py install \
-	--prefix=$(prefix) \
-	--install-scripts=$(BINDIR) \
-	--root=$(DESTDIR)/
-
 # Build the toplevel Makefile
 Makefile.pre: $(srcdir)/Makefile.pre.in config.status
 	CONFIG_FILES=Makefile.pre CONFIG_HEADERS= $(SHELL) config.status
@@ -1791,7 +1776,7 @@ docclean:
 	-rm -rf Doc/tools/sphinx Doc/tools/pygments Doc/tools/docutils
 
 clean: pycremoval
-	find . -name '*.[oa]' -exec rm -f {} ';'
+	find . -path '*Stackless/stackman/*.a' -prune -o -name '*.[oa]' -exec rm -f {} ';'
 	find . -name '*.s[ol]' -exec rm -f {} ';'
 	find . -name '*.so.[0-9]*.[0-9]*' -exec rm -f {} ';'
 	find build -name 'fficonfig.h' -exec rm -f {} ';' || true
@@ -1813,7 +1798,7 @@ profile-removal:
 	rm -f profile-run-stamp
 
 clobber: clean profile-removal
-	-rm -f $(BUILDPYTHON) $(PGEN) $(LIBRARY) $(LDLIBRARY) $(DLLLIBRARY) \
+	-rm -f $(BUILDPYTHON) $(LIBRARY) $(LDLIBRARY) $(DLLLIBRARY) \
 		tags TAGS \
 		config.cache config.log pyconfig.h Modules/config.c
 	-rm -rf build platform
@@ -1883,7 +1868,7 @@ patchcheck: @DEF_MAKE_RULE@
 
 # Dependencies
 
-Python/thread.o: @THREADHEADERS@
+Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
 
 # Declare targets that aren't real files
 .PHONY: all build_all sharedmods check-clean-src oldsharedmods test quicktest

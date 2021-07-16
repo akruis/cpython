@@ -100,7 +100,7 @@ static const double sqrtpi = 1.772453850905516027298167483341145182798;
     }
 
 static double
-sinpi(double x)
+m_sinpi(double x)
 {
     double y, r;
     int n;
@@ -328,7 +328,7 @@ m_tgamma(double x)
        integer. */
     if (absx > 200.0) {
         if (x < 0.0) {
-            return 0.0/sinpi(x);
+            return 0.0/m_sinpi(x);
         }
         else {
             errno = ERANGE;
@@ -352,7 +352,7 @@ m_tgamma(double x)
     }
     z = z * lanczos_g / y;
     if (x < 0.0) {
-        r = -pi / sinpi(absx) / absx * exp(y) / lanczos_sum(absx);
+        r = -pi / m_sinpi(absx) / absx * exp(y) / lanczos_sum(absx);
         r -= z * r;
         if (absx < 140.0) {
             r /= pow(y, absx - 0.5);
@@ -423,7 +423,7 @@ m_lgamma(double x)
     r += (absx - 0.5) * (log(absx + lanczos_g - 0.5) - 1);
     if (x < 0.0)
         /* Use reflection formula to get value for negative x. */
-        r = logpi - log(fabs(sinpi(absx))) - log(absx) - r;
+        r = logpi - log(fabs(m_sinpi(absx))) - log(absx) - r;
     if (Py_IS_INFINITY(r))
         errno = ERANGE;
     return r;
@@ -2493,6 +2493,218 @@ math_isclose_impl(PyObject *module, double a, double b, double rel_tol,
             (diff <= abs_tol));
 }
 
+static inline int
+_check_long_mult_overflow(long a, long b) {
+
+    /* From Python2's int_mul code:
+
+    Integer overflow checking for * is painful:  Python tried a couple ways, but
+    they didn't work on all platforms, or failed in endcases (a product of
+    -sys.maxint-1 has been a particular pain).
+
+    Here's another way:
+
+    The native long product x*y is either exactly right or *way* off, being
+    just the last n bits of the true product, where n is the number of bits
+    in a long (the delivered product is the true product plus i*2**n for
+    some integer i).
+
+    The native double product (double)x * (double)y is subject to three
+    rounding errors:  on a sizeof(long)==8 box, each cast to double can lose
+    info, and even on a sizeof(long)==4 box, the multiplication can lose info.
+    But, unlike the native long product, it's not in *range* trouble:  even
+    if sizeof(long)==32 (256-bit longs), the product easily fits in the
+    dynamic range of a double.  So the leading 50 (or so) bits of the double
+    product are correct.
+
+    We check these two ways against each other, and declare victory if they're
+    approximately the same.  Else, because the native long product is the only
+    one that can lose catastrophic amounts of information, it's the native long
+    product that must have overflowed.
+
+    */
+
+    long longprod = (long)((unsigned long)a * b);
+    double doubleprod = (double)a * (double)b;
+    double doubled_longprod = (double)longprod;
+
+    if (doubled_longprod == doubleprod) {
+        return 0;
+    }
+
+    const double diff = doubled_longprod - doubleprod;
+    const double absdiff = diff >= 0.0 ? diff : -diff;
+    const double absprod = doubleprod >= 0.0 ? doubleprod : -doubleprod;
+
+    if (32.0 * absdiff <= absprod) {
+        return 0;
+    }
+
+    return 1;
+}
+
+/*[clinic input]
+math.prod
+
+    iterable: object
+    /
+    *
+    start: object(c_default="NULL") = 1
+
+Calculate the product of all the elements in the input iterable.
+
+The default start value for the product is 1.
+
+When the iterable is empty, return the start value.  This function is
+intended specifically for use with numeric values and may reject
+non-numeric types.
+[clinic start generated code]*/
+
+static PyObject *
+math_prod_impl(PyObject *module, PyObject *iterable, PyObject *start)
+/*[clinic end generated code: output=36153bedac74a198 input=4c5ab0682782ed54]*/
+{
+    PyObject *result = start;
+    PyObject *temp, *item, *iter;
+
+    iter = PyObject_GetIter(iterable);
+    if (iter == NULL) {
+        return NULL;
+    }
+
+    if (result == NULL) {
+        result = PyLong_FromLong(1);
+        if (result == NULL) {
+            Py_DECREF(iter);
+            return NULL;
+        }
+    } else {
+        Py_INCREF(result);
+    }
+#ifndef SLOW_PROD
+    /* Fast paths for integers keeping temporary products in C.
+     * Assumes all inputs are the same type.
+     * If the assumption fails, default to use PyObjects instead.
+    */
+    if (PyLong_CheckExact(result)) {
+        int overflow;
+        long i_result = PyLong_AsLongAndOverflow(result, &overflow);
+        /* If this already overflowed, don't even enter the loop. */
+        if (overflow == 0) {
+            Py_DECREF(result);
+            result = NULL;
+        }
+        /* Loop over all the items in the iterable until we finish, we overflow
+         * or we found a non integer element */
+        while(result == NULL) {
+            item = PyIter_Next(iter);
+            if (item == NULL) {
+                Py_DECREF(iter);
+                if (PyErr_Occurred()) {
+                    return NULL;
+                }
+                return PyLong_FromLong(i_result);
+            }
+            if (PyLong_CheckExact(item)) {
+                long b = PyLong_AsLongAndOverflow(item, &overflow);
+                if (overflow == 0 && !_check_long_mult_overflow(i_result, b)) {
+                    long x = i_result * b;
+                    i_result = x;
+                    Py_DECREF(item);
+                    continue;
+                }
+            }
+            /* Either overflowed or is not an int.
+             * Restore real objects and process normally */
+            result = PyLong_FromLong(i_result);
+            if (result == NULL) {
+                Py_DECREF(item);
+                Py_DECREF(iter);
+                return NULL;
+            }
+            temp = PyNumber_Multiply(result, item);
+            Py_DECREF(result);
+            Py_DECREF(item);
+            result = temp;
+            if (result == NULL) {
+                Py_DECREF(iter);
+                return NULL;
+            }
+        }
+    }
+
+    /* Fast paths for floats keeping temporary products in C.
+     * Assumes all inputs are the same type.
+     * If the assumption fails, default to use PyObjects instead.
+    */
+    if (PyFloat_CheckExact(result)) {
+        double f_result = PyFloat_AS_DOUBLE(result);
+        Py_DECREF(result);
+        result = NULL;
+        while(result == NULL) {
+            item = PyIter_Next(iter);
+            if (item == NULL) {
+                Py_DECREF(iter);
+                if (PyErr_Occurred()) {
+                    return NULL;
+                }
+                return PyFloat_FromDouble(f_result);
+            }
+            if (PyFloat_CheckExact(item)) {
+                f_result *= PyFloat_AS_DOUBLE(item);
+                Py_DECREF(item);
+                continue;
+            }
+            if (PyLong_CheckExact(item)) {
+                long value;
+                int overflow;
+                value = PyLong_AsLongAndOverflow(item, &overflow);
+                if (!overflow) {
+                    f_result *= (double)value;
+                    Py_DECREF(item);
+                    continue;
+                }
+            }
+            result = PyFloat_FromDouble(f_result);
+            if (result == NULL) {
+                Py_DECREF(item);
+                Py_DECREF(iter);
+                return NULL;
+            }
+            temp = PyNumber_Multiply(result, item);
+            Py_DECREF(result);
+            Py_DECREF(item);
+            result = temp;
+            if (result == NULL) {
+                Py_DECREF(iter);
+                return NULL;
+            }
+        }
+    }
+#endif
+    /* Consume rest of the iterable (if any) that could not be handled
+     * by specialized functions above.*/
+    for(;;) {
+        item = PyIter_Next(iter);
+        if (item == NULL) {
+            /* error, or end-of-sequence */
+            if (PyErr_Occurred()) {
+                Py_DECREF(result);
+                result = NULL;
+            }
+            break;
+        }
+        temp = PyNumber_Multiply(result, item);
+        Py_DECREF(result);
+        Py_DECREF(item);
+        result = temp;
+        if (result == NULL)
+            break;
+    }
+    Py_DECREF(iter);
+    return result;
+}
+
 
 static PyMethodDef math_methods[] = {
     {"acos",            math_acos,      METH_O,         math_acos_doc},
@@ -2541,6 +2753,7 @@ static PyMethodDef math_methods[] = {
     {"tan",             math_tan,       METH_O,         math_tan_doc},
     {"tanh",            math_tanh,      METH_O,         math_tanh_doc},
     MATH_TRUNC_METHODDEF
+    MATH_PROD_METHODDEF
     {NULL,              NULL}           /* sentinel */
 };
 

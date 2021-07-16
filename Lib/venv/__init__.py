@@ -106,10 +106,7 @@ class EnvBuilder:
         context.prompt = '(%s) ' % prompt
         create_if_needed(env_dir)
         env = os.environ
-        if sys.platform == 'darwin' and '__PYVENV_LAUNCHER__' in env:
-            executable = os.environ['__PYVENV_LAUNCHER__']
-        else:
-            executable = sys.executable
+        executable = getattr(sys, '_base_executable', sys.executable)
         dirname, exename = os.path.split(os.path.abspath(executable))
         context.executable = executable
         context.python_dir = dirname
@@ -157,6 +154,8 @@ class EnvBuilder:
                 incl = 'false'
             f.write('include-system-site-packages = %s\n' % incl)
             f.write('version = %d.%d.%d\n' % sys.version_info[:3])
+            if self.prompt is not None:
+                f.write(f'prompt = {self.prompt!r}\n')
 
     def symlink_or_copy(self, src, dst, relative_symlinks_ok=False):
         """
@@ -179,18 +178,26 @@ class EnvBuilder:
                 # On Windows, we rewrite symlinks to our base python.exe into
                 # copies of venvlauncher.exe
                 basename, ext = os.path.splitext(os.path.basename(src))
-                if basename.endswith('_d'):
-                    ext = '_d' + ext
-                    basename = basename[:-2]
-                if sysconfig.is_python_build(True):
+                srcfn = os.path.join(os.path.dirname(__file__),
+                                     "scripts",
+                                     "nt",
+                                     basename + ext)
+                # Builds or venv's from builds need to remap source file
+                # locations, as we do not put them into Lib/venv/scripts
+                if sysconfig.is_python_build(True) or not os.path.isfile(srcfn):
+                    if basename.endswith('_d'):
+                        ext = '_d' + ext
+                        basename = basename[:-2]
                     if basename == 'python':
                         basename = 'venvlauncher'
                     elif basename == 'pythonw':
                         basename = 'venvwlauncher'
-                    scripts = os.path.dirname(src)
+                    src = os.path.join(os.path.dirname(src), basename + ext)
                 else:
-                    scripts = os.path.join(os.path.dirname(__file__), "scripts", "nt")
-                src = os.path.join(scripts, basename + ext)
+                    src = srcfn
+                if not os.path.exists(src):
+                    logger.warning('Unable to copy %r', src)
+                    return
 
             shutil.copyfile(src, dst)
 

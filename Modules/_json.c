@@ -1,8 +1,11 @@
+/* JSON accelerator C extensor: _json module.
+ *
+ * It is built as a built-in module (Py_BUILD_CORE_BUILTIN define) on Windows
+ * and as an extension module (Py_BUILD_CORE_MODULE define) on other
+ * platforms. */
 
-/* Core extension modules are built-in on some platforms (e.g. Windows). */
-#ifdef Py_BUILD_CORE
-#define Py_BUILD_CORE_BUILTIN
-#undef Py_BUILD_CORE
+#if !defined(Py_BUILD_CORE_BUILTIN) && !defined(Py_BUILD_CORE_MODULE)
+#  error "Py_BUILD_CORE_BUILTIN or Py_BUILD_CORE_MODULE must be defined"
 #endif
 
 #include "Python.h"
@@ -746,11 +749,14 @@ _parse_object_unicode(PyScannerObject *s, PyObject *pystr, Py_ssize_t idx, Py_ss
             key = scanstring_unicode(pystr, idx + 1, s->strict, &next_idx);
             if (key == NULL)
                 goto bail;
-            memokey = PyDict_GetItem(s->memo, key);
+            memokey = PyDict_GetItemWithError(s->memo, key);
             if (memokey != NULL) {
                 Py_INCREF(memokey);
                 Py_DECREF(key);
                 key = memokey;
+            }
+            else if (PyErr_Occurred()) {
+                goto bail;
             }
             else {
                 if (PyDict_SetItem(s->memo, key, key) < 0)

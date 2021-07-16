@@ -1,8 +1,11 @@
+/* pickle accelerator C extensor: _pickle module.
+ *
+ * It is built as a built-in module (Py_BUILD_CORE_BUILTIN define) on Windows
+ * and as an extension module (Py_BUILD_CORE_MODULE define) on other
+ * platforms. */
 
-/* Core extension modules are built-in on some platforms (e.g. Windows). */
-#ifdef Py_BUILD_CORE
-#define Py_BUILD_CORE_BUILTIN
-#undef Py_BUILD_CORE
+#if !defined(Py_BUILD_CORE_BUILTIN) && !defined(Py_BUILD_CORE_MODULE)
+#  error "Py_BUILD_CORE_BUILTIN or Py_BUILD_CORE_MODULE must be defined"
 #endif
 
 #include "Python.h"
@@ -12,7 +15,7 @@
 #define SLP_BUILD_CORE
 #include "stackless_api.h"
 #include "pycore_slp_prickelpit.h"
-#include "pycore_slp_platformselect.h" /* for stack saving */
+#include "pycore_stackless.h"
 #endif
 
 PyDoc_STRVAR(pickle_module_doc,
@@ -1129,6 +1132,8 @@ _Pickler_New(void)
         Py_DECREF(self);
         return NULL;
     }
+
+    PyObject_GC_Track(self);
     return self;
 }
 
@@ -1506,6 +1511,7 @@ _Unpickler_New(void)
         return NULL;
     }
 
+    PyObject_GC_Track(self);
     return self;
 }
 
@@ -3962,7 +3968,7 @@ save(PicklerObject *self, PyObject *obj, int pers_save)
 #ifdef STACKLESS
     /* but we save the stack after a fixed watermark */
     {
-        /* use a variable, because SLP_CSTACK_SAVE_NOW evaluates ts several times. */
+        /* use a variable, because SLP_CSTACK_SAVE_NOW may evaluate ts several times. */
         PyThreadState *ts = PyThreadState_GET();
         if (SLP_CSTACK_SAVE_NOW(ts, self)) {
             int res;
@@ -6730,13 +6736,13 @@ _pickle_Unpickler_find_class_impl(UnpicklerObject *self,
         }
     }
 
-    module = PyImport_GetModule(module_name);
+    /*
+     * we don't use PyImport_GetModule here, because it can return partially-
+     * initialised modules, which then cause the getattribute to fail.
+     */
+    module = PyImport_Import(module_name);
     if (module == NULL) {
-        if (PyErr_Occurred())
-            return NULL;
-        module = PyImport_Import(module_name);
-        if (module == NULL)
-            return NULL;
+        return NULL;
     }
     global = getattribute(module, global_name, self->proto >= 4);
     Py_DECREF(module);

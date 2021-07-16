@@ -33,6 +33,19 @@ IS_OPENSSL_1_1_0 = not IS_LIBRESSL and ssl.OPENSSL_VERSION_INFO >= (1, 1, 0)
 IS_OPENSSL_1_1_1 = not IS_LIBRESSL and ssl.OPENSSL_VERSION_INFO >= (1, 1, 1)
 PY_SSL_DEFAULT_CIPHERS = sysconfig.get_config_var('PY_SSL_DEFAULT_CIPHERS')
 
+PROTOCOL_TO_TLS_VERSION = {}
+for proto, ver in (
+    ("PROTOCOL_SSLv23", "SSLv3"),
+    ("PROTOCOL_TLSv1", "TLSv1"),
+    ("PROTOCOL_TLSv1_1", "TLSv1_1"),
+):
+    try:
+        proto = getattr(ssl, proto)
+        ver = getattr(ssl.TLSVersion, ver)
+    except AttributeError:
+        continue
+    PROTOCOL_TO_TLS_VERSION[proto] = ver
+
 def data_file(*name):
     return os.path.join(os.path.dirname(__file__), *name)
 
@@ -752,9 +765,7 @@ class BasicSocketTests(unittest.TestCase):
 
     def test_unknown_channel_binding(self):
         # should raise ValueError for unknown type
-        s = socket.socket(socket.AF_INET)
-        s.bind(('127.0.0.1', 0))
-        s.listen()
+        s = socket.create_server(('127.0.0.1', 0))
         c = socket.socket(socket.AF_INET)
         c.connect(s.getsockname())
         with test_wrap_socket(c, do_handshake_on_connect=False) as ss:
@@ -1092,7 +1103,11 @@ class ContextTests(unittest.TestCase):
         # Fedora override the setting to TLS 1.0.
         self.assertIn(
             ctx.minimum_version,
-            {ssl.TLSVersion.MINIMUM_SUPPORTED, ssl.TLSVersion.TLSv1}
+            {ssl.TLSVersion.MINIMUM_SUPPORTED,
+             # Fedora 29 uses TLS 1.0 by default
+             ssl.TLSVersion.TLSv1,
+             # RHEL 8 uses TLS 1.2 by default
+             ssl.TLSVersion.TLSv1_2}
         )
         self.assertEqual(
             ctx.maximum_version, ssl.TLSVersion.MAXIMUM_SUPPORTED
@@ -1646,11 +1661,8 @@ class SSLErrorTests(unittest.TestCase):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            s.listen()
-            c = socket.socket()
-            c.connect(s.getsockname())
+        with socket.create_server(("127.0.0.1", 0)) as s:
+            c = socket.create_connection(s.getsockname())
             c.setblocking(False)
             with ctx.wrap_socket(c, False, do_handshake_on_connect=False) as c:
                 with self.assertRaises(ssl.SSLWantReadError) as cm:
@@ -2608,6 +2620,17 @@ def try_protocol_combo(server_protocol, client_protocol, expect_success,
     client_context.options |= client_options
     server_context = ssl.SSLContext(server_protocol)
     server_context.options |= server_options
+
+    min_version = PROTOCOL_TO_TLS_VERSION.get(client_protocol, None)
+    if (min_version is not None
+    # SSLContext.minimum_version is only available on recent OpenSSL
+    # (setter added in OpenSSL 1.1.0, getter added in OpenSSL 1.1.1)
+    and hasattr(server_context, 'minimum_version')
+    and server_protocol == ssl.PROTOCOL_TLS
+    and server_context.minimum_version > min_version):
+        # If OpenSSL configuration is strict and requires more recent TLS
+        # version, we have to change the minimum to test old TLS versions.
+        server_context.minimum_version = min_version
 
     # NOTE: we must enable "ALL" ciphers on the client, otherwise an
     # SSLv23 client will send an SSLv3 hello (rather than SSLv2)

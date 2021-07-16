@@ -14,6 +14,46 @@ What's New in Stackless 3.X.X?
   Stackless can't fully support all use-cases. Currently the hook can be used
   by a debugger (i.e. pydevd) to modify the Python byte-code.
 
+- https://github.com/stackless-dev/stackless/issues/278
+  Stackless now uses Stackman https://github.com/stackless-dev/stackman for
+  stack switching / hard tasklet switching. The legacy stack switching code
+  is still available. See 'readme.txt' for details.
+
+- https://github.com/stackless-dev/stackless/issues/254
+  The Stackless version is now "3.8".
+
+- https://github.com/stackless-dev/stackless/issues/288
+  Starting from commit b73166e building Stackless on Windows was broken. This
+  has been fixed.
+
+- https://github.com/stackless-dev/stackless/issues/287
+  The experimental STACKLESS_SPY feature has been removed.
+
+- https://github.com/stackless-dev/stackless/issues/283
+  Platform dependent source code is now completely in "Stackless/platf". The
+  API header files do not depend on the platform any longer and the header
+  "pycore_slp_platformselect.h" does not exist any more.
+
+- https://github.com/stackless-dev/stackless/issues/281
+  Per tasklet profiling and tracing state information is now stored in the
+  tasklet itself. This increases the size of tasklet objects a bit, but saves a
+  lot of code.
+
+- https://github.com/stackless-dev/stackless/issues/284
+  Stackless supports pickling functions. But previous versions of Stackless
+  only pickled the following attributes of a function-object: '__code__',
+  '__globals__', '__name__', '__defaults__', '__closure__' and '__module__'.
+  Now Stackless pickles all attributes of a function.
+
+- https://github.com/stackless-dev/stackless/issues/268
+  Pickled code objects now contain importlib.util.MAGIC_NUMBER. Unpickling
+  code objects pickled with an incompatible version of Python now either
+  raises an IndexError, if the number of pickled attributes is wrong, or emits
+  a RuntimeWarning("Unpickling code object with invalid magic number"). The
+  resulting code object starts with an invalid opcode and renders unpickled
+  frames invalid. Unpickling a function whose code is invalid causes a
+  RuntimeWarning("Unpickling function with invalid code object").
+
 - https://github.com/stackless-dev/stackless/issues/270
   Stackless now uses an unmodified PyFrameObject structure. Stackless now
   stores more state information in the field f->f_executing than C-Python.

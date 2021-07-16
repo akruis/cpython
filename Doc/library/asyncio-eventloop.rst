@@ -281,9 +281,9 @@ clocks to track time.
    the event loop's internal monotonic clock.
 
 .. note::
-
-   Timeouts (relative *delay* or absolute *when*) should not
-   exceed one day.
+   .. versionchanged:: 3.8
+      In Python 3.7 and earlier timeouts (relative *delay* or absolute *when*)
+      should not exceed one day.  This has been fixed in Python 3.8.
 
 .. seealso::
 
@@ -1394,8 +1394,7 @@ Do not instantiate the class directly.
 
    .. attribute:: sockets
 
-      List of :class:`socket.socket` objects the server is listening on,
-      or ``None`` if the server is closed.
+      List of :class:`socket.socket` objects the server is listening on.
 
       .. versionchanged:: 3.7
          Prior to Python 3.7 ``Server.sockets`` used to return an
