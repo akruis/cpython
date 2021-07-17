@@ -700,7 +700,7 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
      (!((x) >> 24) ? 2 : 3 ))))
 #ifdef LLTRACE
 #define LLTRACE_HANDLE_UNWINDING(obj__, msg__) \
-        (void)(lltrace && prtrace((obj__), (msg__)))
+        (void)(lltrace && prtrace(tstate, (obj__), (msg__)))
 #else
 #define LLTRACE_HANDLE_UNWINDING(obj__, msg__) (void)1
 #endif
@@ -3913,11 +3913,8 @@ exception_unwind:
         break;
     } /* main loop */
 
-    assert(retval == NULL);
-    assert(_PyErr_Occurred(tstate));
-
     assert(STACKLESS_RETVAL(tstate, retval) == NULL);
-    assert(PyErr_Occurred());
+    assert(_PyErr_Occurred(tstate));
 
 exit_returning:
 
