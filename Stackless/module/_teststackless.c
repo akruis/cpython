@@ -524,9 +524,9 @@ pep523_frame_hook_eval_frame(PyFrameObject *f, int throwflag) {
     return retval;
 }
 
-#ifndef Py_BUILD_CORE
-#define Py_BUILD_CORE
-#endif
+/*
+ * The code below uses Python internal APIs
+ */
 #include "pycore_pystate.h"
 
 PyDoc_STRVAR(test_install_PEP523_eval_frame_hook__doc__,
